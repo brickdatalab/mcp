@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Supabase MCP HTTP Server
+Supabase MCP SSE Server
 
-A FastMCP-based HTTP server that provides search and fetch capabilities
-for Supabase knowledge bases via PostgREST API.
+A FastMCP-based SSE (Server-Sent Events) server that provides search and fetch capabilities
+for Supabase knowledge bases via PostgREST API. Compatible with ChatGPT custom connectors.
 """
 
 import os
 import logging
 import subprocess
 import threading
+import argparse
 from typing import Dict, List, Optional, Any
 import requests
 from fastmcp import FastMCP
@@ -174,10 +175,10 @@ def fetch(id: str) -> Dict[str, str]:
     result = connector.fetch_document(id)
     return result
 
-def start_localtunnel():
+def start_localtunnel(port=8000):
     """Start localtunnel in a separate thread"""
     try:
-        cmd = ["npx", "localtunnel", "--port", "8000"]
+        cmd = ["npx", "localtunnel", "--port", str(port)]
         if LOCALTUNNEL_SUBDOMAIN:
             cmd.extend(["--subdomain", LOCALTUNNEL_SUBDOMAIN])
         
@@ -200,9 +201,20 @@ def start_localtunnel():
         logger.error(f"Failed to start localtunnel: {e}")
 
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Supabase MCP SSE Server')
+    parser.add_argument('--port', type=int, default=8000, help='Port to run the server on')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind the server to')
+    parser.add_argument('--tunnel', action='store_true', help='Enable localtunnel for public access')
+    args = parser.parse_args()
+    
+    # Override USE_LOCALTUNNEL if --tunnel flag is provided
+    if args.tunnel:
+        USE_LOCALTUNNEL = True
+    
     # Start localtunnel if enabled
     if USE_LOCALTUNNEL:
-        tunnel_thread = threading.Thread(target=start_localtunnel, daemon=True)
+        tunnel_thread = threading.Thread(target=start_localtunnel, args=(args.port,), daemon=True)
         tunnel_thread.start()
     
     # Log configuration
@@ -211,6 +223,15 @@ if __name__ == "__main__":
     logger.info(f"Table: {SUPABASE_TABLE}")
     logger.info(f"Search columns: {SEARCH_COLUMNS}")
     logger.info(f"Localtunnel enabled: {USE_LOCALTUNNEL}")
+    logger.info(f"Server will run on {args.host}:{args.port}")
     
-    # Start the server
-    mcp.run(host="0.0.0.0", port=8000)
+    # Print the local MCP URL (SSE endpoint for ChatGPT)
+    print(f"LOCAL_MCP_URL=http://{args.host}:{args.port}/sse")
+    print(f"PUBLIC_MCP_URL=https://<tunnel-url>/sse")
+    
+    # Start the server with SSE transport for ChatGPT compatibility
+    import asyncio
+    asyncio.run(mcp.run_sse_async(
+        host=args.host,
+        port=args.port
+    ))
